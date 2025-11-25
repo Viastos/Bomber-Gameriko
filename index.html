@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <title>Köy Oyunu - Web</title>
+    <style>
+        body { margin: 0; background-color: #2e4033; color: white; font-family: sans-serif; overflow: hidden; transition: background 1s;}
+        
+        /* Gece Modu Efekti */
+        body.night { background-color: #0b1410; }
+        body.night .house { box-shadow: 0 0 15px yellow; border-color: gold; }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* Ortadaki Toprak Alan */
+        #center-ground {
+            width: 400px;
+            height: 300px;
+            background: #6b5b3e;
+            border-radius: 50%;
+            position: absolute;
+            z-index: 0;
+            opacity: 0.8;
+            box-shadow: inset 0 0 50px #3e3322;
+        }
+
+        /* Ev Tasarımı */
+        .player-container {
+            position: absolute;
+            text-align: center;
+            width: 100px;
+            cursor: pointer;
+            transition: all 0.5s;
+        }
+        .house {
+            width: 80px;
+            height: 60px;
+            background: linear-gradient(to bottom, #5a3e2b, #3e2b1e);
+            border: 2px solid #222;
+            margin: 0 auto;
+            position: relative;
+            clip-path: polygon(0% 40%, 50% 0%, 100% 40%, 100% 100%, 0% 100%); /* Çatı şekli */
+        }
+        .house::after { /* Pencere */
+            content: '';
+            position: absolute;
+            top: 30px; left: 25px;
+            width: 30px; height: 20px;
+            background: #333;
+            transition: background 0.5s;
+        }
+        /* Oyuncu hayattaysa pencere sarı yanar */
+        .alive .house::after { background: #ffe600; box-shadow: 0 0 10px orange; }
+        /* Ölü oyuncu */
+        .dead { opacity: 0.5; filter: grayscale(100%); }
+        .dead .house::after { background: #000; }
+
+        .name-tag {
+            background: rgba(0,0,0,0.7);
+            padding: 2px 5px;
+            border-radius: 4px;
+            font-size: 12px;
+            margin-top: 5px;
+            display: inline-block;
+        }
+
+        /* UI Panelleri */
+        #login-panel { position: absolute; z-index: 10; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 10px; top: 40%; left: 40%; }
+        #controls { position: absolute; top: 10px; right: 10px; }
+        #logs { 
+            position: absolute; bottom: 10px; left: 10px; 
+            width: 300px; height: 200px; 
+            background: rgba(0,0,0,0.6); 
+            overflow-y: auto; 
+            padding: 10px; 
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        #phase-display { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); font-size: 24px; font-weight: bold; text-shadow: 0 0 10px black;}
+    </style>
+</head>
+<body>
+
+    <div id="phase-display">LOBİ</div>
+
+    <div id="login-panel">
+        <h3>Oyuna Katıl</h3>
+        <input type="text" id="username" placeholder="Kullanıcı Adı">
+        <button onclick="joinGame()">GİRİŞ</button>
+    </div>
+
+    <div id="controls">
+        <button onclick="startGame()">OYUNU BAŞLAT (Admin)</button>
+        <button onclick="endNight()">GECEYİ BİTİR (Admin)</button>
+    </div>
+
+    <div id="game-container">
+        <div id="center-ground"></div>
+        </div>
+
+    <div id="logs"></div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let myId = null;
+
+        function joinGame() {
+            const name = document.getElementById('username').value;
+            if(name) {
+                socket.emit('login', name);
+                document.getElementById('login-panel').style.display = 'none';
+            }
+        }
+
+        function startGame() { socket.emit('startGame'); }
+        function endNight() { socket.emit('endNight'); }
+
+        // --- GÜNCELLEME ALMA ---
+        socket.on('connect', () => { myId = socket.id; });
+
+        socket.on('updateGame', (players) => {
+            renderPlayers(players);
+        });
+
+        socket.on('phaseChange', (phase) => {
+            document.getElementById('phase-display').innerText = phase;
+            if(phase === 'GECE') document.body.classList.add('night');
+            else document.body.classList.remove('night');
+        });
+
+        socket.on('systemMessage', (msg) => addLog(msg, 'yellow'));
+        
+        socket.on('nightResult', (logs) => {
+            logs.forEach(l => addLog(l, 'red'));
+        });
+
+        function addLog(msg, color='white') {
+            const logBox = document.getElementById('logs');
+            const div = document.createElement('div');
+            div.style.color = color;
+            div.textContent = `> ${msg}`;
+            logBox.appendChild(div);
+            logBox.scrollTop = logBox.scrollHeight;
+        }
+
+        // --- OYUNCULARI ÇEMBERE DİZME (Matematik Kısmı) ---
+        function renderPlayers(players) {
+            const container = document.getElementById('game-container');
+            // Mevcut oyuncuları temizle (merkez zemin hariç)
+            Array.from(container.children).forEach(child => {
+                if(child.id !== 'center-ground') container.removeChild(child);
+            });
+
+            const playerList = Object.values(players);
+            const count = playerList.length;
+            const radius = 250; // Yarıçap genişliği
+
+            playerList.forEach((player, index) => {
+                // Açıyı hesapla (her oyuncu eşit aralıkla dizilir)
+                const angle = (index / count) * (2 * Math.PI);
+                // X ve Y konumlarını hesapla (Trigonometri)
+                const x = Math.cos(angle) * radius * 1.5; // Yatayda biraz daha geniş (elips)
+                const y = Math.sin(angle) * radius;
+
+                const el = document.createElement('div');
+                el.className = `player-container ${player.isAlive ? 'alive' : 'dead'}`;
+                el.style.transform = `translate(${x}px, ${y}px)`;
+                
+                el.innerHTML = `
+                    <div class="house"></div>
+                    <div class="name-tag" style="color:${player.avatarColor}">${player.name}</div>
+                    ${player.id === myId ? '<div style="color:yellow; font-size:10px;">(SEN)</div>' : ''}
+                `;
+
+                // Tıklama (Aksiyon)
+                el.onclick = () => {
+                    socket.emit('nightAction', player.id);
+                };
+
+                container.appendChild(el);
+            });
+        }
+    </script>
+</body>
+</html>
